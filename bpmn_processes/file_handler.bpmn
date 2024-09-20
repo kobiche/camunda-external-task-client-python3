@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:modeler="http://camunda.org/schema/modeler/1.0" id="Definitions_1nimq77" targetNamespace="http://bpmn.io/schema/bpmn" exporter="Camunda Modeler" exporterVersion="5.12.0" modeler:executionPlatform="Camunda Platform" modeler:executionPlatformVersion="7.19.0">
+  <bpmn:process id="file_test" name="File Handler" isExecutable="true" camunda:modelerTemplate="user-task-file-upload-1.5.0" camunda:historyTimeToLive="P1D" camunda:formKey="embedded:/camunda/app/tasklist/ui-element-templates/template.html">
+    <bpmn:extensionElements>
+      <camunda:inputOutput>
+        <camunda:inputParameter name="formReference">form-template</camunda:inputParameter>
+        <camunda:inputParameter name="userInstruction">Stellen Sie ein Dokument zur Verfügung</camunda:inputParameter>
+        <camunda:inputParameter name="documentsList">hochgeladenesDokument</camunda:inputParameter>
+        <camunda:inputParameter name="uploadData" />
+      </camunda:inputOutput>
+      <camunda:properties>
+        <camunda:property name="documentation" value="Mit diesem Element Template wird der Datei-Upload zur Verwendung im weiteren Prozessverlauf ermöglicht." />
+      </camunda:properties>
+    </bpmn:extensionElements>
+    <bpmn:startEvent id="StartEvent_1">
+      <bpmn:outgoing>Flow_1fm97fr</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_1fm97fr" sourceRef="StartEvent_1" targetRef="Activity_0xvw923" />
+    <bpmn:serviceTask id="Activity_0k67vtc" camunda:type="external" camunda:topic="file_handler_topic">
+      <bpmn:extensionElements>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="inputFile">${hochgeladenesDokument}</camunda:inputParameter>
+          <camunda:inputParameter name="savePath">${hochgeladenesDokument.getName()}</camunda:inputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_1kecr34</bpmn:incoming>
+      <bpmn:outgoing>Flow_06ng6d5</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="Event_1wmo7x7">
+      <bpmn:incoming>Flow_0nzhazi</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_06ng6d5" sourceRef="Activity_0k67vtc" targetRef="Activity_0rnmley" />
+    <bpmn:userTask id="Activity_0xvw923" name="Dokument bereitstellen" camunda:modelerTemplate="user-task-file-upload-1.5.0" camunda:formKey="embedded:/camunda/app/tasklist/ui-element-templates/template.html" camunda:assignee="demo">
+      <bpmn:extensionElements>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="formReference">form-template</camunda:inputParameter>
+          <camunda:inputParameter name="userInstruction">Stellen Sie ein Dokument zur Verfügung</camunda:inputParameter>
+          <camunda:inputParameter name="documentsList">hochgeladenesDokument</camunda:inputParameter>
+          <camunda:inputParameter name="uploadData" />
+        </camunda:inputOutput>
+        <camunda:properties>
+          <camunda:property name="documentation" value="Mit diesem Element Template wird der Datei-Upload zur Verwendung im weiteren Prozessverlauf ermöglicht." />
+        </camunda:properties>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_1fm97fr</bpmn:incoming>
+      <bpmn:outgoing>Flow_1kecr34</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="Flow_1kecr34" sourceRef="Activity_0xvw923" targetRef="Activity_0k67vtc" />
+    <bpmn:sequenceFlow id="Flow_0nzhazi" sourceRef="Activity_0rnmley" targetRef="Event_1wmo7x7" />
+    <bpmn:userTask id="Activity_0rnmley">
+      <bpmn:incoming>Flow_06ng6d5</bpmn:incoming>
+      <bpmn:outgoing>Flow_0nzhazi</bpmn:outgoing>
+    </bpmn:userTask>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="file_test">
+      <bpmndi:BPMNShape id="_BPMNShape_StartEvent_2" bpmnElement="StartEvent_1">
+        <dc:Bounds x="179" y="99" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_1rye9j3_di" bpmnElement="Activity_0k67vtc">
+        <dc:Bounds x="490" y="77" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Event_1wmo7x7_di" bpmnElement="Event_1wmo7x7">
+        <dc:Bounds x="912" y="99" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_1rd3b80_di" bpmnElement="Activity_0xvw923">
+        <dc:Bounds x="280" y="77" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_1g86l58_di" bpmnElement="Activity_0rnmley">
+        <dc:Bounds x="690" y="77" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_1fm97fr_di" bpmnElement="Flow_1fm97fr">
+        <di:waypoint x="215" y="117" />
+        <di:waypoint x="280" y="117" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_06ng6d5_di" bpmnElement="Flow_06ng6d5">
+        <di:waypoint x="590" y="117" />
+        <di:waypoint x="690" y="117" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_1kecr34_di" bpmnElement="Flow_1kecr34">
+        <di:waypoint x="380" y="117" />
+        <di:waypoint x="490" y="117" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_0nzhazi_di" bpmnElement="Flow_0nzhazi">
+        <di:waypoint x="790" y="117" />
+        <di:waypoint x="912" y="117" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
