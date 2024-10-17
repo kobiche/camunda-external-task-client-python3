@@ -1,11 +1,10 @@
-import base64
 import json
 import asyncio
 import sys, os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')))
 from camunda.external_task.external_task import ExternalTask, TaskResult
 from camunda.external_task.async_external_task_worker import AsyncExternalTaskWorker
-from camunda.client.external_task_client import ENGINE_LOCAL_BASE_URL
+from camunda.external_task.file_utils import save_file_from_base64, set_task_variables
 # from src.main import config
 # logger = config.logger
 
@@ -14,49 +13,14 @@ def handle_file_task(task: ExternalTask, file_path) -> TaskResult:
     save_path = task.get_variable("savePath")
 
     if input_file:
-        file_data = base64.b64decode(input_file.get("data"))
-        save_file(file_data, save_path)
-        result_variables = set_task_variables(task, file_path)
+        file_data_base64 = input_file.get("data")
+        save_file_from_base64(file_data_base64, save_path)
+        result_variables = set_task_variables(file_path)
     else:
         print("No file found in task.")
+        result_variables = {}
 
     return task.complete(result_variables)
-
-def save_file(file_data, save_path):
-    with open(save_path, "wb") as file:
-        file.write(file_data)
-    print(f"File saved to {save_path}")
-
-def read_and_encode_file(file_path):
-    with open(file_path, "rb") as file:
-        file_data = file.read()
-    return base64.b64encode(file_data).decode("utf-8")
-
-def set_task_variables(task: ExternalTask, file_path):
-    encoded_file_content = read_and_encode_file(file_path)
-
-    encoded_file = {
-        "data": encoded_file_content,
-        "name": "testname.pdf",
-        "encoding": "utf-8",
-        "contentType": "application/pdf",
-        "objectTypeName": "de.cib.cibflow.api.files.FileValueDataSource"
-    }
-
-    encoded_file_json = json.dumps(encoded_file)
-
-    return {
-        "replaced_file": {
-            "value": json.dumps(encoded_file),
-            "type": "Object",
-            "valueInfo": {
-                'type': 'Object',
-                'objectTypeName': 'de.cib.cibflow.api.files.FileValueDataSource',
-                'serializationDataFormat': 'application/json'
-            }
-        },
-        "savePath": {"value": "sample2.pdf", "type": "String"}
-    }
 
 def handle_variable_task(task: ExternalTask) -> TaskResult:
     first_var = task.get_variable('firstVar')
@@ -78,10 +42,9 @@ def handle_variable_task(task: ExternalTask) -> TaskResult:
 
     return task.complete(variables)
 
-
 if __name__ == "__main__":
     file_path = r"C:\Users\MarcosCa\Downloads\sample2.pdf"
-    
+
     worker = AsyncExternalTaskWorker(worker_id="my-worker", base_url="http://localhost:8088/engine-rest")
     asyncio.run(worker.subscribe({
         "variable_handler_topic": lambda task: handle_variable_task(task),
