@@ -19,9 +19,15 @@ class AsyncExternalTaskWorker:
         self.config = config
         self._log_with_context(f"Created new External Task Worker with config: {obfuscate_password(self.config)}")
 
-    async def subscribe(self, topic_names, action, process_variables=None, variables=None):
+    # async def subscribe(self, topic_names, action, process_variables=None, variables=None):
+    #     tasks = []
+    #     for topic in topic_names:
+    #         tasks.append(self._fetch_and_execute_safe(topic, action, process_variables, variables))
+    #     await asyncio.gather(*tasks)
+
+    async def subscribe(self, topic_handlers, process_variables=None, variables=None):
         tasks = []
-        for topic in topic_names:
+        for topic, action in topic_handlers.items():
             tasks.append(self._fetch_and_execute_safe(topic, action, process_variables, variables))
         await asyncio.gather(*tasks)
 
