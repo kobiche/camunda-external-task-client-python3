@@ -6,7 +6,7 @@
 standardPythonPipeline(
     uiParamPresets: ['CREATE_PYTHON_ARTIFACT': true,
                      'DEPLOY_ANY_BRANCH_TO_REPOSITORY': true,
-                     "UNIT_TESTS": false],
+                     "UNIT_TESTS": true],
     versionfile: 'camunda/VERSION',
     helmChartPaths: [],
     gitTagPrefix: "v"
