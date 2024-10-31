@@ -1,0 +1,24 @@
+[project]
+name = "cibai-c7peth"
+description = "CIB seven (Camunda) External Task Client for Python 3"
+authors = [
+    { name="CIB software GmbH", email="support@cib.de"}
+    ]
+readme = "README.md"
+requires-python = ">=3.8"
+dynamic = ["dependencies", "version"]
+
+[build-system]
+requires = ["setuptools >= 61.0"]
+build-backend = "setuptools.build_meta"
+
+# So that setuptools only includes the cibai package
+[tool.setuptools.packages]
+find = {include = ["camunda", "camunda.*"]}
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+version = {file = "camunda/VERSION"}
+
+[tool.setuptools.package-data]
+"*" = ["VERSION"]
