@@ -23,6 +23,7 @@ class AsyncExternalTaskWorker:
         self.worker_id = worker_id
         self.client = AsyncExternalTaskClient(self.worker_id, base_url, self.config)
         self.executor = AsyncExternalTaskExecutor(self.worker_id, self.client)
+        self.subscriptions: List[asyncio.Task] = []
         self._log_with_context(
             f"Created new External Task Worker with config: {obfuscate_password(self.config)}"
         )
@@ -33,11 +34,13 @@ class AsyncExternalTaskWorker:
         process_variables: Optional[Dict[str, Any]] = None,
         variables: Optional[List[str]] = None,
     ):
-        tasks = [
-            self._fetch_and_execute_safe(topic, action, process_variables, variables)
+        self.subscriptions = [
+            asyncio.create_task(
+                self._fetch_and_execute_safe(topic, action, process_variables, variables)
+            )
             for topic, action in topic_handlers.items()
         ]
-        await asyncio.gather(*tasks)
+        await asyncio.gather(*self.subscriptions)
 
     async def _fetch_and_execute_safe(
         self,
@@ -50,14 +53,22 @@ class AsyncExternalTaskWorker:
         while True:
             try:
                 await self.fetch_and_execute(topic_name, action, process_variables, variables)
+            except asyncio.CancelledError:
+                self._log_with_context(f"Task for topic {topic_name} was cancelled.")
+                break
             except Exception as e:
                 self._log_with_context(
                     f"Error fetching and executing tasks: {get_exception_detail(e)} "
                     f"for topic={topic_name} with Process variables: {process_variables}. "
                     f"Retrying after {sleep_seconds} seconds",
                     exc_info=True,
+                    log_level="error"
                 )
-            await asyncio.sleep(sleep_seconds)
+            try:
+                await asyncio.sleep(sleep_seconds)
+            except asyncio.CancelledError:
+                self._log_with_context(f"Sleep interrupted for topic {topic_name}.")
+                break
 
     async def fetch_and_execute(
         self,
@@ -68,28 +79,18 @@ class AsyncExternalTaskWorker:
     ):
         self._log_with_context(
             f"Fetching and executing external tasks for Topic: {topic_name} "
-            f"with Process variables: {process_variables}"
+            f"with Process variables: {process_variables}",
+            log_level="debug"
         )
-        resp_json = await self._fetch_and_lock(topic_name, process_variables, variables)
+        resp_json = await self.client.fetch_and_lock([topic_name], process_variables, variables)
         tasks = self._parse_response(resp_json, topic_name, process_variables)
         if not tasks:
             self._log_with_context(
-                f"No external tasks found for Topic: {topic_name}, Process variables: {process_variables}"
+                f"No external tasks found for Topic: {topic_name}, Process variables: {process_variables}",
+                log_level="debug"
             )
             return
         await self._execute_tasks(tasks, action)
-
-    async def _fetch_and_lock(
-        self,
-        topic_name: str,
-        process_variables: Optional[Dict[str, Any]] = None,
-        variables: Optional[List[str]] = None,
-    ) -> List[Dict[str, Any]]:
-        self._log_with_context(
-            f"Fetching and locking external tasks for Topic: {topic_name} "
-            f"with Process variables: {process_variables}"
-        )
-        return await self.client.fetch_and_lock([topic_name], process_variables, variables)
 
     def _parse_response(
         self,
@@ -101,7 +102,8 @@ class AsyncExternalTaskWorker:
         tasks_count = len(tasks)
         self._log_with_context(
             f"{tasks_count} external task(s) found for "
-            f"Topic: {topic_name}, Process variables: {process_variables}"
+            f"Topic: {topic_name}, Process variables: {process_variables}",
+            log_level="debug"
         )
         return tasks
 
@@ -115,15 +117,22 @@ class AsyncExternalTaskWorker:
     async def _execute_task(self, task: ExternalTask, action: Callable[[ExternalTask], Any]):
         try:
             await self.executor.execute_task(task, action)
+        except asyncio.CancelledError:
+            self._log_with_context(
+                f"Task execution cancelled for task_id: {task.get_task_id()}",
+                topic=task.get_topic_name(),
+                task_id=task.get_task_id(),
+                log_level="info"
+            )
+            raise  # Re-raise the exception to propagate cancellation
         except Exception as e:
             self._log_with_context(
                 f"Error when executing task: {get_exception_detail(e)}",
                 topic=task.get_topic_name(),
                 task_id=task.get_task_id(),
                 log_level="error",
-                exc_info=True,
+                exc_info=True
             )
-            # Handle the exception as needed (e.g., report failure, continue)
 
     def _log_with_context(
         self,
@@ -138,3 +147,7 @@ class AsyncExternalTaskWorker:
 
     def _get_sleep_seconds(self) -> int:
         return self.config.get("sleepSeconds", self.DEFAULT_SLEEP_SECONDS)
+
+    def stop(self):
+        for task in self.subscriptions:
+            task.cancel()
