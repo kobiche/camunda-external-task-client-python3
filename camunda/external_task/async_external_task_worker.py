@@ -1,96 +1,153 @@
 import asyncio
+from typing import Any, Callable, Dict, List, Optional
 
-from camunda.client.external_task_client import ExternalTaskClient, ENGINE_LOCAL_BASE_URL
+from camunda.client.async_external_task_client import AsyncExternalTaskClient
+from camunda.client.external_task_client import ENGINE_LOCAL_BASE_URL
+from camunda.external_task.async_external_task_executor import AsyncExternalTaskExecutor
 from camunda.external_task.external_task import ExternalTask
-from camunda.external_task.external_task_executor import ExternalTaskExecutor
-from camunda.utils.log_utils import log_with_context
 from camunda.utils.auth_basic import obfuscate_password
+from camunda.utils.log_utils import log_with_context
 from camunda.utils.utils import get_exception_detail
 
 
 class AsyncExternalTaskWorker:
     DEFAULT_SLEEP_SECONDS = 300
 
-    def __init__(self, worker_id, base_url=ENGINE_LOCAL_BASE_URL, config=None):
-        config = config if config is not None else {}  # To avoid to have a mutable default for a parameter
+    def __init__(
+        self,
+        worker_id: str,
+        base_url: str = ENGINE_LOCAL_BASE_URL,
+        config: Optional[Dict[str, Any]] = None,
+    ):
+        self.config = config or {}
         self.worker_id = worker_id
-        self.client = ExternalTaskClient(self.worker_id, base_url, config)
-        self.executor = ExternalTaskExecutor(self.worker_id, self.client)
-        self.config = config
-        self._log_with_context(f"Created new External Task Worker with config: {obfuscate_password(self.config)}")
+        self.client = AsyncExternalTaskClient(self.worker_id, base_url, self.config)
+        self.executor = AsyncExternalTaskExecutor(self.worker_id, self.client)
+        self.subscriptions: List[asyncio.Task] = []
+        self._log_with_context(
+            f"Created new External Task Worker with config: {obfuscate_password(self.config)}"
+        )
 
-    # async def subscribe(self, topic_names, action, process_variables=None, variables=None):
-    #     tasks = []
-    #     for topic in topic_names:
-    #         tasks.append(self._fetch_and_execute_safe(topic, action, process_variables, variables))
-    #     await asyncio.gather(*tasks)
+    async def subscribe(
+        self,
+        topic_handlers: Dict[str, Callable[[ExternalTask], Any]],
+        process_variables: Optional[Dict[str, Any]] = None,
+        variables: Optional[List[str]] = None,
+    ):
+        self.subscriptions = [
+            asyncio.create_task(
+                self._fetch_and_execute_safe(topic, action, process_variables, variables)
+            )
+            for topic, action in topic_handlers.items()
+        ]
+        await asyncio.gather(*self.subscriptions)
 
-    async def subscribe(self, topic_handlers, process_variables=None, variables=None):
-        tasks = []
-        for topic, action in topic_handlers.items():
-            tasks.append(self._fetch_and_execute_safe(topic, action, process_variables, variables))
-        await asyncio.gather(*tasks)
-
-    async def _fetch_and_execute_safe(self, topic_name, action, process_variables=None, variables=None):
+    async def _fetch_and_execute_safe(
+        self,
+        topic_name: str,
+        action: Callable[[ExternalTask], Any],
+        process_variables: Optional[Dict[str, Any]] = None,
+        variables: Optional[List[str]] = None,
+    ):
+        sleep_seconds = self._get_sleep_seconds()
         while True:
             try:
                 await self.fetch_and_execute(topic_name, action, process_variables, variables)
-            except NoExternalTaskFound:
-                self._log_with_context(f"no External Task found for Topic: {topic_name}, "
-                                       f"Process variables: {process_variables}", topic=topic_name)
-            except BaseException as e:
-                sleep_seconds = self._get_sleep_seconds()
-                self._log_with_context(f'error fetching and executing tasks: {get_exception_detail(e)} '
-                                       f'for topic={topic_name} with Process variables: {process_variables}. '
-                                       f'retrying after {sleep_seconds} seconds', exc_info=True)
+            except asyncio.CancelledError:
+                self._log_with_context(f"Task for topic {topic_name} was cancelled.")
+                break
+            except Exception as e:
+                self._log_with_context(
+                    f"Error fetching and executing tasks: {get_exception_detail(e)} "
+                    f"for topic={topic_name} with Process variables: {process_variables}. "
+                    f"Retrying after {sleep_seconds} seconds",
+                    exc_info=True,
+                    log_level="error"
+                )
+            try:
                 await asyncio.sleep(sleep_seconds)
+            except asyncio.CancelledError:
+                self._log_with_context(f"Sleep interrupted for topic {topic_name}.")
+                break
 
-    async def fetch_and_execute(self, topic_name, action, process_variables=None, variables=None):
-        self._log_with_context(f"Fetching and Executing external tasks for Topic: {topic_name} "
-                               f"with Process variables: {process_variables}")
-        resp_json = await asyncio.to_thread(self._fetch_and_lock, topic_name, process_variables, variables)
+    async def fetch_and_execute(
+        self,
+        topic_name: str,
+        action: Callable[[ExternalTask], Any],
+        process_variables: Optional[Dict[str, Any]] = None,
+        variables: Optional[List[str]] = None,
+    ):
+        self._log_with_context(
+            f"Fetching and executing external tasks for Topic: {topic_name} "
+            f"with Process variables: {process_variables}",
+            log_level="debug"
+        )
+        resp_json = await self.client.fetch_and_lock([topic_name], process_variables, variables)
         tasks = self._parse_response(resp_json, topic_name, process_variables)
-        if len(tasks) == 0:
-            raise NoExternalTaskFound(f"no External Task found for Topic: {topic_name}, "
-                                      f"Process variables: {process_variables}")
+        if not tasks:
+            self._log_with_context(
+                f"No external tasks found for Topic: {topic_name}, Process variables: {process_variables}",
+                log_level="debug"
+            )
+            return
         await self._execute_tasks(tasks, action)
 
-    def _fetch_and_lock(self, topic_name, process_variables=None, variables=None):
-        self._log_with_context(f"Fetching and Locking external tasks for Topic: {topic_name} "
-                               f"with Process variables: {process_variables}")
-        return self.client.fetch_and_lock([topic_name], process_variables, variables)
-
-    def _parse_response(self, resp_json, topic_name, process_variables):
-        tasks = []
-        if resp_json:
-            for context in resp_json:
-                task = ExternalTask(context)
-                tasks.append(task)
-
+    def _parse_response(
+        self,
+        resp_json: List[Dict[str, Any]],
+        topic_name: str,
+        process_variables: Optional[Dict[str, Any]],
+    ) -> List[ExternalTask]:
+        tasks = [ExternalTask(context) for context in resp_json or []]
         tasks_count = len(tasks)
-        self._log_with_context(f"{tasks_count} External task(s) found for "
-                               f"Topic: {topic_name}, Process variables: {process_variables}")
+        self._log_with_context(
+            f"{tasks_count} external task(s) found for "
+            f"Topic: {topic_name}, Process variables: {process_variables}",
+            log_level="debug"
+        )
         return tasks
 
-    async def _execute_tasks(self, tasks, action):
-        await asyncio.gather(*(self._execute_task(task, action) for task in tasks))
+    async def _execute_tasks(
+        self, tasks: List[ExternalTask], action: Callable[[ExternalTask], Any]
+    ):
+        await asyncio.gather(
+            *(self._execute_task(task, action) for task in tasks), return_exceptions=True
+        )
 
-    async def _execute_task(self, task, action):
+    async def _execute_task(self, task: ExternalTask, action: Callable[[ExternalTask], Any]):
         try:
-            await asyncio.to_thread(self.executor.execute_task, task, action)
+            await self.executor.execute_task(task, action)
+        except asyncio.CancelledError:
+            self._log_with_context(
+                f"Task execution cancelled for task_id: {task.get_task_id()}",
+                topic=task.get_topic_name(),
+                task_id=task.get_task_id(),
+                log_level="info"
+            )
+            raise  # Re-raise the exception to propagate cancellation
         except Exception as e:
-            self._log_with_context(f'error when executing task: {get_exception_detail(e)}',
-                                   topic=task.get_topic_name(), task_id=task.get_task_id(),
-                                   log_level='error', exc_info=True)
-            raise e
+            self._log_with_context(
+                f"Error when executing task: {get_exception_detail(e)}",
+                topic=task.get_topic_name(),
+                task_id=task.get_task_id(),
+                log_level="error",
+                exc_info=True
+            )
 
-    def _log_with_context(self, msg, topic=None, task_id=None, log_level='info', **kwargs):
+    def _log_with_context(
+        self,
+        msg: str,
+        topic: Optional[str] = None,
+        task_id: Optional[str] = None,
+        log_level: str = "info",
+        **kwargs: Any,
+    ):
         context = {"WORKER_ID": str(self.worker_id), "TOPIC": topic, "TASK_ID": task_id}
         log_with_context(msg, context=context, log_level=log_level, **kwargs)
 
-    def _get_sleep_seconds(self):
+    def _get_sleep_seconds(self) -> int:
         return self.config.get("sleepSeconds", self.DEFAULT_SLEEP_SECONDS)
 
-
-class NoExternalTaskFound(Exception):
-    pass
+    def stop(self):
+        for task in self.subscriptions:
+            task.cancel()
