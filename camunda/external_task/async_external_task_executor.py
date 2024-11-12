@@ -16,7 +16,7 @@ class AsyncExternalTaskExecutor:
         topic = task.get_topic_name()
         task_id = task.get_task_id()
         self._log_with_context(f"Executing external task for Topic: {topic}", task_id=task_id)
-        task_result = action(task)
+        task_result = await action(task)
         # in case task result is not set inside action function, set it in task here
         task.set_task_result(task_result)
         await self._handle_task_result(task_result)
