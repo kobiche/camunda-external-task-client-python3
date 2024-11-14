@@ -11,7 +11,7 @@ from camunda.utils.utils import get_exception_detail
 
 
 class AsyncExternalTaskWorker:
-    DEFAULT_SLEEP_SECONDS = 300
+    DEFAULT_SLEEP_SECONDS = 1  # Sleep duration when no tasks are fetched
 
     def __init__(
         self,
@@ -24,6 +24,9 @@ class AsyncExternalTaskWorker:
         self.client = AsyncExternalTaskClient(self.worker_id, base_url, self.config)
         self.executor = AsyncExternalTaskExecutor(self.worker_id, self.client)
         self.subscriptions: List[asyncio.Task] = []
+        max_concurrent_tasks = self.config.get('maxConcurrentTasks', 10)
+        self.semaphore = asyncio.Semaphore(max_concurrent_tasks)
+        self.running_tasks = set()
         self._log_with_context(
             f"Created new External Task Worker with config: {obfuscate_password(self.config)}"
         )
@@ -52,7 +55,14 @@ class AsyncExternalTaskWorker:
         sleep_seconds = self._get_sleep_seconds()
         while True:
             try:
-                await self.fetch_and_execute(topic_name, action, process_variables, variables)
+                await self.semaphore.acquire()
+                tasks_processed = await self.fetch_and_execute(topic_name, action, process_variables, variables)
+                if not tasks_processed:
+                    # Release semaphore if no tasks were fetched
+                    self.semaphore.release()
+                    await asyncio.sleep(sleep_seconds)
+                else:
+                    await asyncio.sleep(0)  # Yield control to the event loop
             except asyncio.CancelledError:
                 self._log_with_context(f"Task for topic {topic_name} was cancelled.")
                 break
@@ -64,11 +74,8 @@ class AsyncExternalTaskWorker:
                     exc_info=True,
                     log_level="error"
                 )
-            try:
+                self.semaphore.release()
                 await asyncio.sleep(sleep_seconds)
-            except asyncio.CancelledError:
-                self._log_with_context(f"Sleep interrupted for topic {topic_name}.")
-                break
 
     async def fetch_and_execute(
         self,
@@ -85,12 +92,17 @@ class AsyncExternalTaskWorker:
         resp_json = await self.client.fetch_and_lock([topic_name], process_variables, variables)
         tasks = self._parse_response(resp_json, topic_name, process_variables)
         if not tasks:
-            self._log_with_context(
-                f"No external tasks found for Topic: {topic_name}, Process variables: {process_variables}",
-                log_level="debug"
-            )
-            return
-        await self._execute_tasks(tasks, action)
+            return False
+
+        for task in tasks:
+            # Start processing the task in the background
+            running_task = asyncio.create_task(self._execute_task(task, action))
+            self.running_tasks.add(running_task)
+            # Release semaphore when task is done
+            running_task.add_done_callback(lambda t: self.semaphore.release())
+            # Remove from running_tasks when done
+            running_task.add_done_callback(self.running_tasks.discard)
+        return True
 
     def _parse_response(
         self,
@@ -106,13 +118,6 @@ class AsyncExternalTaskWorker:
             log_level="debug"
         )
         return tasks
-
-    async def _execute_tasks(
-        self, tasks: List[ExternalTask], action: Callable[[ExternalTask], Any]
-    ):
-        await asyncio.gather(
-            *(self._execute_task(task, action) for task in tasks), return_exceptions=True
-        )
 
     async def _execute_task(self, task: ExternalTask, action: Callable[[ExternalTask], Any]):
         try:
@@ -148,6 +153,13 @@ class AsyncExternalTaskWorker:
     def _get_sleep_seconds(self) -> int:
         return self.config.get("sleepSeconds", self.DEFAULT_SLEEP_SECONDS)
 
-    def stop(self):
+    async def stop(self):
+        # First, cancel running tasks
+        for task in self.running_tasks:
+            task.cancel()
+        await asyncio.gather(*self.running_tasks, return_exceptions=True)
+
+        # Then, cancel the fetch loops (subscriptions)
         for task in self.subscriptions:
             task.cancel()
+        await asyncio.gather(*self.subscriptions, return_exceptions=True)

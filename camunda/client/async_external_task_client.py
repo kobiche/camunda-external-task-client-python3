@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class AsyncExternalTaskClient:
     default_config = {
-        "maxTasks": 1,
+        "maxConcurrentTasks": 10,  # Number of concurrent tasks you can process
         "lockDuration": 300000,  # in milliseconds
         "asyncResponseTimeout": 30000,
         "retries": 3,
@@ -46,7 +46,7 @@ class AsyncExternalTaskClient:
         url = self.get_fetch_and_lock_url()
         body = {
             "workerId": str(self.worker_id),  # convert to string to make it JSON serializable
-            "maxTasks": self.config["maxTasks"],
+            "maxTasks": 1,
             "topics": self._get_topics(topic_names, process_variables, variables),
             "asyncResponseTimeout": self.config["asyncResponseTimeout"],
             "usePriority": self.config["usePriority"],
